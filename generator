@@ -1,0 +1,159 @@
+#!/usr/bin/env python
+
+# parse arguments (tunable parameters)
+
+
+def emit_dummy_fns(out, options):
+    s = """
+#include "dispatch.h"
+
+"""
+    for i in range(options.n):
+        s += "void fn_{0}(void) {{ state_trk += {0}; }}\n".format(i)
+    out.write(s)
+
+def emit_dummy_fns_h(out, options):
+    s = "#pragma once\n"
+    for i in range(options.n):
+        s += "extern void fn_{0}(void);\n".format(i)
+    out.write(s)
+
+def emit_switch_c(out, options):
+    s = """
+#include "dispatch.h"
+#include "dummy-fns.h"
+#include <stdlib.h>
+
+void dispatch(int state) {
+  switch(state) {
+"""
+    for i in range(options.n):
+        s += "    case {0}: fn_{0}(); return;\n".format(i)
+    s += """    default: abort();
+  }
+}
+"""
+    out.write(s)
+
+def emit_vtable_c(out, options):
+    n = options.n
+    s = """
+#include "dispatch.h"
+#include "dummy-fns.h"
+#include <stdlib.h>
+
+static void (*vtable[{0}])(void) = {{
+""".format(n)
+    s += ', '.join("fn_{0}".format(i) for i in range(n))
+    s += """\n}};
+
+void dispatch(int state) {{
+  if (state > {0}) abort();
+  (*vtable[state])();
+}}
+""".format(n)
+    out.write(s)
+
+# emit assembly
+def emit_vtable_amd64(out, options):
+    s = """.text
+        .global dispatch
+dispatch: cmp ${n}, %edi
+        jge 1f
+        jmp *vtable(, %edi, 8)
+1:      call abort
+
+        .data
+        .align 16
+vtable:\t""".format(n = options.n)
+    for i in range(options.n):
+        s += "\t.quad fn_{}\n".format(i)
+    out.write(s)
+
+def emit_linear_amd64(out, options):
+    s = """.text
+        .global dispatch
+dispatch:\t"""
+    for i in range(options.n):
+        s += "\tcmp ${0}, %edi\n\tje fn_{0}\n".format(i)
+    s += "\tcall abort\n"
+    out.write(s)
+
+# class Op:
+#     def emit(self): pass
+# class Call(Op):
+#     def __init__(self, fn): self.fn = fn
+#     def emit(self): return "jmp fn_{}".format(fn)
+# class JumpIfGreater(Op):
+#     def __init__(self, label): self.label = label
+#     def emit(self): return "jae {}".format(label)
+# class Label:
+#     def __init__(self, label): self.label = label
+#     def emit(self): return "{}:\t".format(label)
+
+# def generate_binary_search_tree(l, i, n):
+#     if n <= 1: return [Call(i)]
+#     return [Compare(mid),
+#             JumpIfGreater(label_above)] +
+#            generate_binary_calls(label_below, i, (n+1)/2) +
+#            [Label(label_below)] +
+#            generate_binary_calls(label_above, mid, n/2)
+
+def emit_binary_amd64(out, options):
+    def generate_binary_calls(l, i, n, last_comparison):
+        if n <= 1: return 'jmp fn_{0}'.format(i)
+        if n == 2: return """{2}
+	je fn_{0}
+        jmp fn_{1}""".format(i, i+1, '' if last_comparison == i else "cmp ${0}, %edi".format(i))
+        if n == 3: return """{3}
+        je fn_{0}
+        jb fn_{1}
+        jmp fn_{2}""".format(i+1, i, i+2, '' if last_comparison == i+1 else "cmp ${0}, %edi".format(i+1))
+        mid = i+(n+1)/2
+        s ="""cmp ${mid}, %edi
+        jae .L{label_above}
+.L{label_below}:\t{case_below}
+.L{label_above}:\t{case_above}"""
+        return s.format(mid=mid,
+                        label_below=l+"0",
+                        label_above=l+"1",
+                        case_below=generate_binary_calls(l+"0", i, (n+1)/2, mid),
+                        case_above=generate_binary_calls(l+"1", mid, n/2, mid))
+    out.write("""
+        .text
+        .global dispatch
+dispatch:
+	{}
+	call abort\n""".format(generate_binary_calls("", 0, options.n, None)))
+
+import argparse
+
+def main():
+    parser = argparse.ArgumentParser()
+    # parser.add_argument('--fn-work', choices=['none', 'clflush'],
+    #                     help='what kind of work dummy functions do (none, clflush)')
+    parser.add_argument('--cache-flush', choices=['none', 'I', 'D', 'ID'],
+                        help='whether dummy functions flush cache')
+    parser.add_argument('--fn-alignment',
+                        help='alignment of dummy functions, in bytes')
+    parser.add_argument('--n-entries', type=int, dest='n',
+                        help='number of dummy functions in dispatch table')
+    parser.add_argument('file', nargs='+', help='file to generate')
+    options = parser.parse_args()
+    if 0 == options.n:
+        sys.stderr.write("Need a positive integer number of entries (--n-entries=...)\n")
+        exit(1)
+
+    t = {'dummy-fns.c': lambda f: emit_dummy_fns(f, options),
+         'dummy-fns.h': lambda f: emit_dummy_fns_h(f, options),
+         'c-switch.c': lambda f: emit_switch_c(f, options),
+         'c-vtable.c': lambda f: emit_vtable_c(f, options),
+         'x86_64-linear.s': lambda f: emit_linear_amd64(f, options),
+         'x86_64-binary.s': lambda f: emit_binary_amd64(f, options),
+         'x86_64-vtable.s': lambda f: emit_vtable_amd64(f, options)}
+    for x in options.file:
+        with open(x, "w") as f:
+            t[x](f)
+    exit(0)
+
+if __name__ == '__main__': main()
