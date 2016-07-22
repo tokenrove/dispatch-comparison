@@ -44,7 +44,7 @@ def run_perf_tool(t, run, opt):
     else:
         die("Not sure how to deal with {}".format(opt.perf_tool))
     cmd += [t.path, str(opt.n_dispatches)]
-    print cmd
+    if opt.verbose: print ' '.join(cmd)
     with open("{}-run-{}".format(t.path, run), "w") as f:
         return subprocess.call(cmd, stderr=f)
 
@@ -53,10 +53,9 @@ def run_trials(trials, opt):
     opt.perf_tool."""
     random.shuffle(trials)
     for t in trials:
-        print 'run {} {} times'.format(t.path, opt.n_runs)
         for i in range(opt.n_runs):
             code = run_perf_tool(t, i, opt)
-            print "{} returned {}".format(t.path, code)
+            if opt.verbose: print "{} returned {}".format(t.path, code)
             validate_exit_code(code, t, opt)
         aggregate_individual_results(t, opt)
 
@@ -92,8 +91,9 @@ def generate(experiment, strategies, opt):
             '--cache-flush', experiment.cache_flush,
             '--fn-alignment', experiment.fn_alignment,
             'dummy-fns.c', 'dummy-fns.h']
-    print args
-    subprocess.check_call(map(str, args) + map(src_of_strategy, strategies))
+    cmd = map(str, args) + map(src_of_strategy, strategies)
+    if opt.verbose: print ' '.join(cmd)
+    subprocess.check_call(cmd)
     os.chdir(d)
 
 def src_of_strategy(s):
@@ -107,7 +107,7 @@ def src_of_strategy(s):
 # wanted to explicitly rebuild everything every time anyway, so why
 # not do it through Python?
 def build_trial(trial, opt):
-    cc_flags = '-Wall -pedantic -std=gnu11 -O3 -g'.split()
+    cc_flags = '-Wall -Wextra -std=gnu11 -O3 -mtune=native -march=native -g'.split()
     ld_flags = '-lm'.split()
     driver_objs = ['main.c',
                    'ns-{}.c'.format(trial.experiment.distribution)]
@@ -119,7 +119,7 @@ def build_trial(trial, opt):
     d = os.path.dirname(trial.path)
     build_cmd += [os.path.join(d, x) for x in [trial.source, 'dummy-fns.c']]
     build_cmd += ld_flags
-    print build_cmd
+    if opt.verbose: print ' '.join(build_cmd)
     subprocess.check_call(build_cmd)
 
 def build_trials(factors, opt):
@@ -153,7 +153,7 @@ def main():
                         choices=['strategy','n_entries','cache_flush',
                                  'distribution', 'fn_alignment'])
     parser.add_argument('--n-runs', dest='n_runs', type=int, default=5)
-    parser.add_argument('--n-dispatches', type=int, default=10000)
+    parser.add_argument('--n-dispatches', type=int, default=100000)
     parser.add_argument('--perf-tool', choices=['perf','cachegrind'], default='perf')
     parser.add_argument('--template-path', default=os.path.dirname(os.path.realpath(__file__)))
     parser.add_argument('--output-path', default=os.getcwd())
@@ -161,9 +161,8 @@ def main():
     parser.add_argument('--run', dest='run_p', default=True)
     parser.add_argument('--dont-build', dest='build_p', action='store_false')
     parser.add_argument('--dont-run', dest='run_p', action='store_false')
+    parser.add_argument('--verbose', action='store_true')
     opt = parser.parse_args()
-
-    print opt.template_path
 
     # for each factor, we have a range of values
     factors = {
