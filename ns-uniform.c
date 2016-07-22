@@ -1,5 +1,5 @@
-
 #include "dispatch.h"
+#include <stdlib.h>
 
 int next_state(void)
 {

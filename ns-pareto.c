@@ -1,6 +1,7 @@
 
 #include "dispatch.h"
 #include <math.h>
+#include <stdlib.h>
 
 int next_state(void)
 {
