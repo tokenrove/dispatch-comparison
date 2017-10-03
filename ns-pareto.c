@@ -5,7 +5,7 @@
 
 int next_state(void)
 {
-    if (fmod((double)rand(), 100.0d) < 80.0d)
-        return 42 % N_ENTRIES;
-    return rand() % N_ENTRIES;  /* you should never do this. */
+    if (next() % 10 < 8)
+        return 0;
+    return next() % N_ENTRIES;  /* you should never do this. */
 }

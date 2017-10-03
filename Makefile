@@ -33,40 +33,47 @@ help:
 
 THIS_RUN := results-$(shell date +%Y%m%d-%H%M%S)
 
-CFLAGS ?= -Wall -pedantic -std=gnu11 -O3 -g
+# Note that you may have to change -DHAVE_GETRANDOM to -DHAVE_RDRAND
+# depending on what kernel and hardware you have.
+CFLAGS ?= -Wall -pedantic -std=gnu11 -I. -Igenerated -O3 -g -DHAVE_GETRANDOM
 LDFLAGS ?= -lm
 
 all: run-experiment
-run-experiment: clean-old-results generate-files run-trials analyze-results
-	mkdir $(shell hostname)-$(shell date +%y%m%d)
+run-experiment: clean generate-files run-trials analyze-results
+
+generated/:
+	mkdir -p generated/
 
 %.o: %.c
 	$(CC) $(CFLAGS) -DN_ENTRIES=$(N_ENTRIES) -o $@ -c $^
 
 HEADER_FILES := dispatch.h dummy-fns.h
-DRIVER_OBJS := main.o dummy-fns.o ns-$(CALL_DISTRIBUTION).o
-$(PLATFORM)-linear: $(PLATFORM)-linear.o $(DRIVER_OBJS)
-$(PLATFORM)-binary: $(PLATFORM)-binary.o $(DRIVER_OBJS)
-$(PLATFORM)-vtable: $(PLATFORM)-vtable.o $(DRIVER_OBJS)
-c-switch: c-switch.o $(DRIVER_OBJS)
-c-vtable: c-vtable.o $(DRIVER_OBJS)
+DRIVER_OBJS := main.o generated/dummy-fns.o ns-$(CALL_DISTRIBUTION).o xoroshiro128plus.o
+$(PLATFORM)-linear: generated/$(PLATFORM)-linear.o $(DRIVER_OBJS)
+$(PLATFORM)-binary: generated/$(PLATFORM)-binary.o $(DRIVER_OBJS)
+$(PLATFORM)-vtable: generated/$(PLATFORM)-vtable.o $(DRIVER_OBJS)
+c-switch: generated/c-switch.o $(DRIVER_OBJS)
+c-vtable: generated/c-vtable.o $(DRIVER_OBJS)
 
 %.c: $(HEADER_FILES)
 
 $(TRIALS):
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) -static $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-GENERATED_FILES := dummy-fns.h dummy-fns.c $(PLATFORM)-linear.s $(PLATFORM)-binary.s $(PLATFORM)-vtable.s c-switch.c c-vtable.c
+GENERATED_FILES := generated/dummy-fns.h generated/dummy-fns.c \
+	generated/$(PLATFORM)-linear.s generated/$(PLATFORM)-binary.s \
+	generated/$(PLATFORM)-vtable.s generated/c-switch.c generated/c-vtable.c
 
 $(GENERATED_FILES): generator
 
 GENERATOR_FLAGS=--fn-work=$(FN_WORK) --fn-alignment=$(FN_ALIGNMENT) --n-entries=$(N_ENTRIES)
-generate-files: generator
+generate-files: generated/ generator
 	./generator $(GENERATOR_FLAGS) $(GENERATED_FILES)
 
 run-trials: $(shell shuf -e $(TRIALS))
 	for i in $^; do \
 	  echo running $$i in $(THIS_RUN); \
+	  perf stat -r $(N_RUNS) ./$$i $(N_DISPATCHES) ||:; \
 	done
 
 clean:
